@@ -29,6 +29,10 @@ The authors of this program may be contacted at https://forum.princed.org
 #include "dirent.h"
 #endif
 
+#ifdef __vita__
+vita2d_shader *shader = NULL;
+#endif
+
 // Most functions in this file are different from those in the original game.
 
 void sdlperror(const char* header) {
@@ -266,6 +270,9 @@ void __pascal far quit(int exit_code) {
 
 // seg009:0C90
 void __pascal far restore_stuff() {
+#ifdef __SWITCH__
+	socketExit();
+#endif
 	SDL_Quit();
 }
 
@@ -338,7 +345,13 @@ int __pascal far pop_wait(int timer_index,int time) {
 
 static FILE* open_dat_from_root_or_data_dir(const char* filename) {
 	FILE* fp = NULL;
+#ifdef __vita__
+	char vita_path[POP_MAX_PATH];
+	snprintf(vita_path, sizeof(vita_path), "ux0:data/prince/%s", filename);
+	fp = fopen(vita_path, "rb");
+#else
 	fp = fopen(filename, "rb");
+#endif
 
 	// if failed, try if the DAT file can be opened in the data/ directory, instead of the main folder
 	if (fp == NULL) {
@@ -855,7 +868,12 @@ int __pascal far set_joy_mode() {
 			SDL_GameControllerAddMappingsFromFile(gamecontrollerdb_file);
 		}
 
-		if (SDL_IsGameController(0)) {
+#if defined(__vita__) || defined(__SWITCH__)
+		bool use_game_controller = false;
+#else
+		bool use_game_controller = SDL_IsGameController(0);
+#endif
+		if (use_game_controller) {
 			sdl_controller_ = SDL_GameControllerOpen(0);
 			if (sdl_controller_ == NULL) {
 				is_joyst_mode = 0;
@@ -1514,6 +1532,17 @@ void __pascal far draw_text_cursor(int xpos,int ypos,int color) {
 
 // seg009:053C
 int __pascal far input_str(const rect_type far *rect,char *buffer,int max_length,const char *initial,int has_initial,int arg_4,int color,int bgcolor) {
+#if defined(__SWITCH__)
+	SwkbdConfig kbd;
+	swkbdCreate(&kbd, 0);
+	swkbdConfigMakePresetDefault(&kbd);
+	swkbdShow(&kbd, buffer, max_length);
+	return strlen(buffer);
+#elif defined(__vita__)
+	char *str = kbdvita_get("Enter your name", "", max_length);
+	strncpy(buffer, (str != NULL) ? str : "No name", max_length);
+	return strlen(buffer);
+#else
 	short length;
 	word key;
 	short cursor_visible;
@@ -1587,6 +1616,7 @@ int __pascal far input_str(const rect_type far *rect,char *buffer,int max_length
 			}
 		}
 	} while(1);
+#endif
 }
 
 #else // USE_TEXT
@@ -2084,7 +2114,11 @@ const int sound_channel = 0;
 const int max_sound_id = 58;
 
 void load_sound_names() {
+#ifdef __vita__
+	const char* names_path = locate_file("ux0:data/prince/data/music/names.txt");
+#else
 	const char* names_path = locate_file("data/music/names.txt");
+#endif
 	if (sound_names != NULL) return;
 	FILE* fp = fopen(names_path,"rt");
 	if (fp==NULL) return;
@@ -2130,11 +2164,19 @@ sound_buffer_type* load_sound(int index) {
 				char filename[POP_MAX_PATH];
 				if (!skip_mod_data_files) {
 					// before checking the root directory, first try mods/MODNAME/
+#ifdef __vita__
+					snprintf_check(filename, sizeof(filename), "ux0:data/prince/%s/music/%s.ogg", mod_data_path, sound_name(index));
+#else
 					snprintf_check(filename, sizeof(filename), "%s/music/%s.ogg", mod_data_path, sound_name(index));
+#endif
 					fp = fopen(filename, "rb");
 				}
 				if (fp == NULL && !skip_normal_data_files) {
+#ifdef __vita__
+					snprintf_check(filename, sizeof(filename), "ux0:data/prince/data/music/%s.ogg", sound_name(index));
+#else
 					snprintf_check(filename, sizeof(filename), "data/music/%s.ogg", sound_name(index));
+#endif
 					fp = fopen(locate_file(filename), "rb");
 				}
 				if (fp == NULL) {
@@ -2365,6 +2407,7 @@ int __pascal far check_sound_playing() {
 }
 
 void apply_aspect_ratio() {
+#ifndef __vita__
 	// Allow us to use a consistent set of screen co-ordinates, even if the screen size changes
 	if (use_correct_aspect_ratio) {
 		SDL_RenderSetLogicalSize(renderer_, 320 * 5, 200 * 6); // 4:3
@@ -2372,6 +2415,7 @@ void apply_aspect_ratio() {
 		SDL_RenderSetLogicalSize(renderer_, 320, 200); // 16:10
 	}
 	window_resized();
+#endif
 }
 
 void window_resized() {
@@ -2441,15 +2485,24 @@ void __pascal far set_gr_mode(byte grmode) {
 #ifdef SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING
 	SDL_SetHint(SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING, "1");
 #endif
+#ifdef __vita__
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_NOPARACHUTE |
+				SDL_INIT_GAMECONTROLLER ) != 0) {
+#else
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_NOPARACHUTE |
 	             SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC ) != 0) {
+#endif
 		sdlperror("set_gr_mode: SDL_Init");
 		quit(1);
 	}
 
 	//SDL_EnableUNICODE(1); //deprecated
 	Uint32 flags = 0;
+#ifdef __SWITCH__
+	start_fullscreen = 1;
+#else
 	if (!start_fullscreen) start_fullscreen = check_param("full") != NULL;
+#endif
 	if (start_fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 	flags |= SDL_WINDOW_RESIZABLE;
 	flags |= SDL_WINDOW_ALLOW_HIGHDPI; // for Retina displays
@@ -2486,6 +2539,9 @@ void __pascal far set_gr_mode(byte grmode) {
 #else
 	const Uint32 RENDER_BACKEND = SDL_RENDERER_SOFTWARE;
 #endif
+#ifdef __vita__
+	renderer_ = SDL_CreateRenderer(window_, -1 , SDL_RENDERER_ACCELERATED);
+#else
 	renderer_ = SDL_CreateRenderer(window_, -1 , RENDER_BACKEND | SDL_RENDERER_TARGETTEXTURE);
 	SDL_RendererInfo renderer_info;
 	if (SDL_GetRendererInfo(renderer_, &renderer_info) == 0) {
@@ -2493,6 +2549,7 @@ void __pascal far set_gr_mode(byte grmode) {
 			is_renderer_targettexture_supported = true;
 		}
 	}
+#endif
 	if (use_integer_scaling) {
 #if SDL_VERSION_ATLEAST(2,0,5) // SDL_RenderSetIntegerScale
 		SDL_RenderSetIntegerScale(renderer_, SDL_TRUE);
@@ -2510,6 +2567,16 @@ void __pascal far set_gr_mode(byte grmode) {
 
 	apply_aspect_ratio();
 	window_resized();
+
+#ifdef __vita__
+	// For the sharp_bilinear_simple shader to work, linear filtering has to be enabled.
+	// This is done by a simple command here, supported by SDL2 for Vita since 2017/12/24.
+	// This affects all textures created after this command.
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+	//Enable sharp-bilinear-simple shader for sharp pixels without distortion.
+	//This has to be done after the SDL renderer is created because that inits vita2d.
+	shader = setPSP2Shader(SHARP_BILINEAR_SIMPLE);
+#endif
 
 	/* Migration to SDL2: everything is still blitted to onscreen_surface_, however:
 	 * SDL2 renders textures to the screen instead of surfaces; so, every screen
@@ -2661,7 +2728,23 @@ void update_screen() {
 		SDL_UpdateTexture(target_texture, NULL, surface->pixels, surface->pitch);
 	}
 	SDL_RenderClear(renderer_);
+#ifdef __vita__
+	int sh = 544;
+	int factW = use_correct_aspect_ratio ? 5 : 1;
+	int factH = use_correct_aspect_ratio ? 6 : 1;
+	int sw = start_fullscreen ? 960 : (float)320*factW*((float)sh/(float)(200*factH));
+	int x = (960 - sw)/2;
+
+	SDL_Rect src;
+	src.x = 0; src.y = 0; src.w = 320; src.h = 200;
+
+	SDL_Rect dst;
+	dst.x = x; dst.y = 0; dst.w = sw; dst.h = sh;
+
+	SDL_RenderCopy(renderer_, target_texture, &src, &dst);
+#else
 	SDL_RenderCopy(renderer_, target_texture, NULL, NULL);
+#endif
 	SDL_RenderPresent(renderer_);
 }
 
@@ -2760,7 +2843,11 @@ void load_from_opendats_metadata(int resource_id, const char* extension, FILE** 
 			if (len >= 5 && filename_no_ext[len-4] == '.') {
 				filename_no_ext[len-4] = '\0'; // terminate, so ".DAT" is deleted from the filename
 			}
+#ifdef __vita__
+			snprintf_check(image_filename,sizeof(image_filename),"ux0:data/prince/data/%s/res%d.%s",filename_no_ext, resource_id, extension);
+#else
 			snprintf_check(image_filename,sizeof(image_filename),"data/%s/res%d.%s",filename_no_ext, resource_id, extension);
+#endif
 			if (!use_custom_levelset) {
 				//printf("loading (binary) %s",image_filename);
 				fp = fopen(locate_file(image_filename), "rb");
@@ -2769,7 +2856,11 @@ void load_from_opendats_metadata(int resource_id, const char* extension, FILE** 
 				if (!skip_mod_data_files) {
 					char image_filename_mod[POP_MAX_PATH];
 					// before checking data/, first try mods/MODNAME/data/
+#ifdef __vita__
+					snprintf_check(image_filename_mod, sizeof(image_filename_mod), "ux0:data/prince/%s/%s", mod_data_path, image_filename);
+#else
 					snprintf_check(image_filename_mod, sizeof(image_filename_mod), "%s/%s", mod_data_path, image_filename);
+#endif
 					//printf("loading (binary) %s",image_filename_mod);
 					fp = fopen(locate_file(image_filename_mod), "rb");
 				}
@@ -3261,6 +3352,9 @@ void __pascal start_timer(int timer_index, int length) {
 }
 
 void toggle_fullscreen(void) {
+#ifdef __vita__
+	start_fullscreen = !start_fullscreen;
+#else
 	uint32_t flags = SDL_GetWindowFlags(window_);
 	if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
 		SDL_SetWindowFullscreen(window_, 0);
@@ -3270,6 +3364,7 @@ void toggle_fullscreen(void) {
 		SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
 		SDL_ShowCursor(SDL_DISABLE);
 	}
+#endif
 }
 
 bool ignore_tab = false;
@@ -3427,6 +3522,7 @@ void process_events() {
 				}
 				SDL_GameControllerClose(SDL_GameControllerFromInstanceID(event.cdevice.which));
 				break;
+#if !defined(__SWITCH__) && !defined(__vita__)
 			case SDL_CONTROLLERBUTTONDOWN:
 				//Make sure sdl_controller_ always points to the active controller
 				sdl_controller_ = SDL_GameControllerFromInstanceID(event.cdevice.which);
@@ -3476,8 +3572,94 @@ void process_events() {
 					default: break;
 				}
 				break;
+#endif
 			case SDL_JOYBUTTONDOWN:
+#if defined(__SWITCH__)
+				switch (event.jbutton.button)
+				{
+					case BTN_LEFT:   joy_hat_states[0] = -1; break;
+					case BTN_RIGHT:  joy_hat_states[0] = 1; break;
+					case BTN_UP:     joy_hat_states[1] = -1; break;
+					case BTN_DOWN:   joy_hat_states[1] = 1; break;
+					case BTN_A:      if (!is_menu_shown) { joy_X_button_state = 1; last_key_scancode = 1; } else { last_key_scancode = SDL_SCANCODE_RETURN; } break;
+					case BTN_B:      if (!is_menu_shown) { joy_hat_states[1] = -1; } else { last_key_scancode = SDL_SCANCODE_BACKSPACE; } break;
+					case BTN_X:      is_show_time = 1; break;
+					case BTN_Y:      if (!is_menu_shown) { joy_hat_states[1] = 1; } break;
+					case BTN_L:      if (!is_menu_shown) { last_key_scancode = SDL_SCANCODE_F9; } break;
+					case BTN_R:      if (!is_menu_shown) { last_key_scancode = SDL_SCANCODE_F6; } break;
+					case BTN_ZL:
+						if (!is_menu_shown && cheats_enabled) {
+							if (rem_min > 1) --rem_min;
+#ifdef ALLOW_INFINITE_TIME
+							else if (rem_min < -1) ++rem_min; // if negative/infinite, time runs 'forward'
+							else if (rem_min == -1) rem_tick = 720; // resets the timer to 00:00:00
+#endif
+							text_time_total = 0;
+							text_time_remaining = 0;
+							is_show_time = 1;
+						}
+						break;
+					case BTN_ZR:
+						if (!is_menu_shown && cheats_enabled) {
+#ifdef ALLOW_INFINITE_TIME
+							if (rem_min < 0) { // if negative/infinite, time runs 'forward'
+								if (rem_min > INT16_MIN) --rem_min;
+							}
+							else ++rem_min;
+#else
+							++rem_min;
+#endif
+							text_time_total = 0;
+							text_time_remaining = 0;
+							is_show_time = 1;
+						}
+						break;
+					case BTN_PLUS:   last_key_scancode = SDL_SCANCODE_ESCAPE; break;
+				}
+				break;
+#elif defined(__vita__)
+				switch (event.jbutton.button)
+				{
+					case BTN_LEFT:     joy_hat_states[0] = -1; break;
+					case BTN_RIGHT:    joy_hat_states[0] = 1; break;
+					case BTN_UP:       joy_hat_states[1] = -1; break;
+					case BTN_DOWN:     joy_hat_states[1] = 1; break;
+					case BTN_CROSS:    if (!is_menu_shown) { joy_X_button_state = 1; last_key_scancode = 1; } else { last_key_scancode = SDL_SCANCODE_RETURN; } break;
+					case BTN_CIRCLE:   if (!is_menu_shown) { joy_hat_states[1] = -1; } else { last_key_scancode = SDL_SCANCODE_BACKSPACE; } break;
+					case BTN_TRIANGLE: is_show_time = 1; break;
+					case BTN_LTRIGGER: last_key_scancode = SDL_SCANCODE_F9; break;
+					case BTN_RTRIGGER: last_key_scancode = SDL_SCANCODE_F6; break;
+					case BTN_START:    last_key_scancode = SDL_SCANCODE_ESCAPE; break;
+					case BTN_SELECT:   toggle_fullscreen(); break;
+				}
+				break;
+#endif
 			case SDL_JOYBUTTONUP:
+#if defined(__SWITCH__)
+				switch (event.jbutton.button)
+				{
+					case BTN_LEFT:   joy_hat_states[0] = 0; break;
+					case BTN_RIGHT:  joy_hat_states[0] = 0; break;
+					case BTN_UP:     joy_hat_states[1] = 0; break;
+					case BTN_DOWN:   joy_hat_states[1] = 0; break;
+					case BTN_A:      if (!is_menu_shown) { joy_X_button_state = 0; } break;
+					case BTN_B:      if (!is_menu_shown) { joy_hat_states[1] = 0; } break;
+					case BTN_Y:      if (!is_menu_shown) { joy_hat_states[1] = 0; } break;
+				}
+				break;
+#elif defined(__vita__)
+				switch (event.jbutton.button)
+				{
+					case BTN_LEFT:   joy_hat_states[0] = 0; break;
+					case BTN_RIGHT:  joy_hat_states[0] = 0; break;
+					case BTN_UP:     joy_hat_states[1] = 0; break;
+					case BTN_DOWN:   joy_hat_states[1] = 0; break;
+					case BTN_CROSS:  if (!is_menu_shown) { joy_X_button_state = 0; } break;
+					case BTN_CIRCLE: if (!is_menu_shown) { joy_hat_states[1] = 0; } break;
+				}
+				break;
+#endif
+#ifndef __vita__
 			case SDL_JOYAXISMOTION:
 				// Only handle the event if the joystick is incompatible with the SDL_GameController interface.
 				// (Otherwise it will interfere with the normal action of the SDL_GameController API.)
@@ -3513,6 +3695,7 @@ void process_events() {
 					else if (event.jbutton.button == SDL_JOYSTICK_BUTTON_X)   joy_X_button_state = 0;    // X (Shift)
 				}
 				break;
+#endif
 
 			case SDL_TEXTINPUT:
 				last_text_input = event.text.text[0]; // UTF-8 formatted char text input
@@ -3564,7 +3747,7 @@ void process_events() {
 					//stop_sounds();
 				}
 				break;
-#ifdef USE_MENU
+#if defined(USE_MENU) && !defined(__SWITCH__) && !defined(__vita__)
 			case SDL_MOUSEBUTTONDOWN:
 				switch(event.button.button) {
 					case SDL_BUTTON_LEFT:

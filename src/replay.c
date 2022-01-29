@@ -269,7 +269,11 @@ void change_working_dir_to_sdlpop_root(void) {
 		strncpy(exe_dir, exe_path, len);
 		exe_dir[len] = '\0';
 
+#ifdef __vita__
+		int result = 0;
+#else
 		int result = chdir(exe_dir);
+#endif
 		if (result != 0) {
 			perror("Can't change into SDLPoP directory");
 		}
@@ -798,10 +802,12 @@ int save_recorded_replay_dialog() {
 	snprintf_check(full_filename, sizeof(full_filename), "%s/%s.p1r", replays_folder, input_filename);
 
 	// create the "replays" folder if it does not exist already
+#ifndef __vita__
 #if defined WIN32 || _WIN32 || WIN64 || _WIN64
 	mkdir (replays_folder);
 #else
 	mkdir (replays_folder, 0700);
+#endif
 #endif
 
 	// NOTE: We currently overwrite the replay file if it exists already. Maybe warn / ask for confirmation??
